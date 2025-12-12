@@ -1,0 +1,487 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    @apply box-border;
+  }
+
+  body {
+    @apply m-0 bg-black text-white overflow-x-hidden;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+      'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+      sans-serif;
+  }
+
+  #root {
+    @apply min-h-screen;
+  }
+}
+
+@layer components {
+  .app-container {
+    @apply min-h-screen bg-black flex flex-col;
+    background: radial-gradient(ellipse at top, #0a0a0a 0%, #000000 50%);
+  }
+
+  .header {
+    @apply flex justify-between items-center px-5 py-4
+           border border-white/10 backdrop-blur-xl;
+    background: rgba(255, 255, 255, 0.03);
+    box-shadow:
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.1),
+      0 20px 40px -10px rgba(0, 0, 0, 0.5);
+  }
+
+  .logo {
+    @apply text-xl font-bold tracking-wide text-white;
+    text-shadow: 0 0 20px rgba(255, 255, 255, 0.5);
+  }
+
+  .settings-btn {
+    @apply bg-none border-none text-white cursor-pointer p-2 rounded-full
+           transition-all hover:bg-white/10;
+  }
+
+  .main-content {
+    @apply flex-1 px-5 py-4 flex flex-col gap-6;
+  }
+
+  .liquid-glass {
+    @apply backdrop-blur-xl border border-white/10;
+    background: linear-gradient(135deg,
+      rgba(255, 255, 255, 0.1) 0%,
+      rgba(255, 255, 255, 0.02) 100%);
+    box-shadow:
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.1),
+      0 20px 40px -10px rgba(0, 0, 0, 0.3),
+      0 0 0 1px rgba(255, 255, 255, 0.05);
+  }
+
+  .liquid-glass-dark {
+    @apply backdrop-blur-xl border border-white/5;
+    background: linear-gradient(135deg,
+      rgba(255, 255, 255, 0.05) 0%,
+      rgba(255, 255, 255, 0.01) 100%);
+    box-shadow:
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.05),
+      0 20px 40px -10px rgba(0, 0, 0, 0.5);
+  }
+
+  .player-stats,
+  .recent-games,
+  .battle-arena,
+  .bet-panel,
+  .game-lobby {
+    @apply liquid-glass rounded-2xl p-6;
+  }
+
+  .game-card {
+    @apply liquid-glass-dark rounded-xl p-4 transition-all hover:scale-[1.02];
+  }
+
+  .username {
+    @apply text-2xl font-semibold mb-4 text-white;
+  }
+
+  .stats-grid {
+    @apply grid grid-cols-3 gap-5;
+  }
+
+  .stat-item {
+    @apply flex flex-col items-center gap-1;
+  }
+
+  .stat-label {
+    @apply text-xs text-white/70 uppercase tracking-wide;
+  }
+
+  .stat-value {
+    @apply text-xl font-semibold text-white;
+  }
+
+  .section-title {
+    @apply text-lg font-semibold mb-4 text-white/90;
+  }
+
+  .game-list {
+    @apply flex flex-col gap-3;
+  }
+
+  .game-item {
+    @apply flex items-center justify-between px-4 py-3
+           liquid-glass-dark rounded-xl;
+  }
+
+  .game-item.win {
+    @apply border-green-500/20;
+    background: linear-gradient(135deg,
+      rgba(34, 197, 94, 0.1) 0%,
+      rgba(34, 197, 94, 0.02) 100%);
+  }
+
+  .opponent {
+    @apply flex items-center gap-3;
+  }
+
+  .avatar {
+    @apply w-10 h-10 rounded-full border-2 border-white/[0.2];
+  }
+
+  .avatar-small {
+    @apply w-8 h-8 rounded-full border-2 border-white/[0.2];
+  }
+
+  .amount {
+    @apply text-base font-medium text-white;
+  }
+
+  .win-badge {
+    @apply bg-green-500/20 border border-green-500/50 text-green-400
+           px-3 py-1 rounded-full text-xs font-semibold tracking-wide;
+  }
+
+  .battle-arena {
+    @apply flex-1 flex items-center;
+  }
+
+  .players {
+    @apply flex items-center justify-between w-full gap-5;
+  }
+
+  .player {
+    @apply flex items-center gap-4 flex-1;
+  }
+
+  .player-left {
+    @apply flex-row;
+  }
+
+  .player-right {
+    @apply flex-row-reverse;
+  }
+
+  .player-avatar {
+    @apply w-20 h-20 rounded-full border-4 border-white/[0.2];
+  }
+
+  .player-info {
+    @apply flex flex-col items-center gap-3;
+  }
+
+  .player-name {
+    @apply text-base font-semibold text-white;
+  }
+
+  .choice-coin {
+    @apply w-12 h-12 rounded-full border-2 border-white/30;
+  }
+
+  .battle-center {
+    @apply flex flex-col items-center gap-4;
+  }
+
+  .vs-text {
+    @apply text-2xl font-bold text-white/80 tracking-widest;
+  }
+
+  .battle-coin {
+    @apply relative w-24 h-24 flex items-center justify-center;
+  }
+
+  .coin-outer {
+    @apply absolute w-full h-full rounded-full;
+    background: radial-gradient(circle, #fbbf24 0%, #f59e0b 100%);
+    box-shadow: 0 0 30px rgba(251, 191, 36, 0.5);
+    animation: coinPulse 2s ease-in-out infinite;
+  }
+
+  .coin-inner {
+    @apply absolute w-[85%] h-[85%] rounded-full
+           flex items-center justify-center text-3xl font-bold text-amber-900;
+    background: radial-gradient(circle, #fcd34d 0%, #fbbf24 100%);
+  }
+
+  .coin-inner::before {
+    content: "?";
+  }
+
+  .bet-amount {
+    @apply text-xl font-bold text-amber-400;
+    text-shadow: 0 0 10px rgba(251, 191, 36, 0.5);
+  }
+}
+
+@keyframes coinPulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.05);
+    opacity: 0.9;
+  }
+}
+
+@keyframes coinFlip {
+  0% {
+    transform: rotateY(0deg) rotateX(0deg);
+  }
+  25% {
+    transform: rotateY(90deg) rotateX(180deg);
+  }
+  50% {
+    transform: rotateY(180deg) rotateX(360deg);
+  }
+  75% {
+    transform: rotateY(270deg) rotateX(540deg);
+  }
+  100% {
+    transform: rotateY(360deg) rotateX(720deg);
+  }
+}
+
+.animate-coin-flip {
+  animation: coinFlip 0.6s ease-in-out infinite;
+  transform-style: preserve-3d;
+}
+
+/* Coin Toss Animation - toss up and fall down */
+@keyframes coinToss {
+  0% {
+    transform: translateY(0) rotateX(0deg) scale(1);
+  }
+  15% {
+    transform: translateY(-80px) rotateX(360deg) scale(1.1);
+  }
+  30% {
+    transform: translateY(-120px) rotateX(720deg) scale(1.2);
+  }
+  50% {
+    transform: translateY(-140px) rotateX(1080deg) scale(1.3);
+  }
+  70% {
+    transform: translateY(-80px) rotateX(1440deg) scale(1.2);
+  }
+  85% {
+    transform: translateY(-20px) rotateX(1620deg) scale(1.1);
+  }
+  100% {
+    transform: translateY(0) rotateX(1800deg) scale(1);
+  }
+}
+
+.animate-coin-toss {
+  animation: coinToss 2.5s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
+  transform-style: preserve-3d;
+}
+
+/* Coin Land Animation - bounce effect when landing */
+@keyframes coinLand {
+  0% {
+    transform: scale(1.3) translateY(-20px);
+    opacity: 0;
+  }
+  30% {
+    transform: scale(1.1) translateY(5px);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.05) translateY(-3px);
+  }
+  70% {
+    transform: scale(1.02) translateY(2px);
+  }
+  100% {
+    transform: scale(1) translateY(0);
+  }
+}
+
+.animate-coin-land {
+  animation: coinLand 0.5s ease-out forwards;
+}
+
+/* 3D Coin Flip Animation */
+.perspective-500 {
+  perspective: 500px;
+}
+
+.coin-3d-container {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  transform-style: preserve-3d;
+  animation: coin3DFlip 0.8s linear infinite;
+}
+
+.coin-3d-face {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  backface-visibility: hidden;
+  border-radius: 50%;
+}
+
+.coin-3d-front {
+  transform: rotateY(0deg);
+}
+
+.coin-3d-back {
+  transform: rotateY(180deg);
+}
+
+@keyframes coin3DFlip {
+  0% {
+    transform: rotateY(0deg) rotateX(10deg);
+  }
+  25% {
+    transform: rotateY(90deg) rotateX(-5deg);
+  }
+  50% {
+    transform: rotateY(180deg) rotateX(10deg);
+  }
+  75% {
+    transform: rotateY(270deg) rotateX(-5deg);
+  }
+  100% {
+    transform: rotateY(360deg) rotateX(10deg);
+  }
+}
+
+/* Bouncing coin on ground effect */
+.coin-bounce {
+  animation: coinBounce 0.8s linear infinite, coinShadow 0.8s linear infinite;
+}
+
+@keyframes coinBounce {
+  0%, 100% {
+    transform: translateY(0) rotateY(0deg);
+  }
+  25% {
+    transform: translateY(-30px) rotateY(90deg);
+  }
+  50% {
+    transform: translateY(0) rotateY(180deg);
+  }
+  75% {
+    transform: translateY(-15px) rotateY(270deg);
+  }
+}
+
+@keyframes coinShadow {
+  0%, 50%, 100% {
+    filter: drop-shadow(0 20px 10px rgba(0, 0, 0, 0.4));
+  }
+  25% {
+    filter: drop-shadow(0 40px 20px rgba(0, 0, 0, 0.2));
+  }
+  75% {
+    filter: drop-shadow(0 30px 15px rgba(0, 0, 0, 0.3));
+  }
+}
+
+@layer utilities {
+  /* Mobile responsive utilities */
+  @media (max-width: 768px) {
+    .main-content {
+      @apply px-4 py-4 gap-5;
+    }
+
+    .username {
+      @apply text-xl;
+    }
+
+    .stats-grid {
+      @apply gap-4;
+    }
+
+    .stat-value {
+      @apply text-lg;
+    }
+
+    .players {
+      @apply flex-col gap-7;
+    }
+
+    .player {
+      @apply justify-center;
+    }
+
+    .player-left,
+    .player-right {
+      @apply flex-col;
+    }
+
+    .player-avatar {
+      @apply w-16 h-16 md:w-20 md:h-20;
+    }
+
+    .vs-text {
+      @apply text-xl;
+    }
+
+    .battle-coin {
+      @apply w-20 h-20;
+    }
+
+    .bet-amount {
+      @apply text-lg;
+    }
+  }
+
+  @media (max-width: 480px) {
+    .header {
+      @apply px-3 py-3;
+    }
+
+    .main-content {
+      @apply px-3 py-3 gap-4;
+    }
+
+    .player-stats,
+    .recent-games,
+    .battle-arena {
+      @apply p-4;
+    }
+
+    .username {
+      @apply text-lg;
+    }
+
+    .section-title {
+      @apply text-base;
+    }
+
+    .player-name {
+      @apply text-sm;
+    }
+
+    .choice-coin {
+      @apply w-10 h-10;
+    }
+
+    .avatar {
+      @apply w-8 h-8;
+    }
+  }
+}
+
+/* Custom Scrollbar */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 10px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 10px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
