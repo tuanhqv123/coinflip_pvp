@@ -40,8 +40,8 @@ interface GameLobbyProps {
 }
 
 // Center content - VS, Flipping Coin, or Result Coin
-const CenterContent: React.FC<{ 
-  status: Game['status']; 
+const CenterContent: React.FC<{
+  status: Game['status'];
   playerCount: string;
   winner: string | null;
   winnerSide: 'heads' | 'tails' | null;
@@ -49,9 +49,9 @@ const CenterContent: React.FC<{
   // Waiting - show VS
   if (status === 'waiting') {
     return (
-      <div className="flex flex-col items-center">
+      <div className="flex flex-col items-center justify-center h-full">
         <div className="text-2xl font-bold text-white/50">VS</div>
-        <div className="text-xs text-white/40 mt-1">{playerCount}</div>
+        <div className="text-sm text-white/60 mt-1">{playerCount}</div>
       </div>
     );
   }
@@ -59,22 +59,18 @@ const CenterContent: React.FC<{
   // Game is full or flipping - show flipping coin until winner is revealed
   if ((status === 'full' || status === 'flipping') && !winner) {
     return (
-      <div className="flex flex-col items-center">
-        <div className="w-16 h-16">
-          <FlippingCoin3D size="medium" />
-        </div>
-        <div className="text-xs text-white/40 mt-2">{playerCount}</div>
+      <div className="flex flex-col items-center justify-center h-full">
+        <FlippingCoin3D size="medium" />
+        <div className="text-sm text-white/60 mt-2">{playerCount}</div>
       </div>
     );
   }
 
   // Winner revealed - show the winning coin side (stopped)
   return (
-    <div className="flex flex-col items-center">
-      <div className="w-16 h-16">
-        <PixelCoin side={winnerSide || 'heads'} size="large" />
-      </div>
-      <div className="text-xs text-white/40 mt-2">{playerCount}</div>
+    <div className="flex flex-col items-center justify-center h-full">
+      <PixelCoin side={winnerSide || 'heads'} size="medium"/>
+      <div className="text-sm text-white/60 mt-2">{playerCount}</div>
     </div>
   );
 };
@@ -134,8 +130,8 @@ const GameCard: React.FC<{
 
       {/* Top: Amount */}
       <div className="flex items-center justify-center gap-2 mb-4">
-        <img src={suiSymbol} alt="SUI" className="w-5 h-5" />
-        <span className="text-3xl font-bold text-white">{game.totalStake}</span>
+        <img src={suiSymbol} alt="SUI" className="w-4 h-5" />
+        <span className="text-2xl font-mono text-white">{game.totalStake}</span>
       </div>
 
       {/* 2 Players Layout */}
@@ -219,7 +215,7 @@ const GameCard: React.FC<{
           
           {/* Player count if not flipping */}
           {game.status !== 'full' && game.status !== 'flipping' && (
-            <div className="text-center text-xs text-white/40 mb-2">{playerCount}</div>
+            <div className="text-center text-xs text-white/40">{playerCount}</div>
           )}
 
           {/* Player list - simple row layout */}
@@ -294,6 +290,9 @@ const GameCard: React.FC<{
   );
 };
 
+// Filter types
+type FilterType = 'open' | 'claimed' | 'win' | 'lose';
+
 // Main GameLobby component
 export const GameLobby: React.FC<GameLobbyProps> = ({
   games,
@@ -303,9 +302,27 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
   loading,
   currentAddress,
 }) => {
+  const [filter, setFilter] = React.useState<FilterType>('open');
+
   // Separate my games and other games
   const myGames = games.filter((game) => game.isPlayer || game.isCreator);
   const otherGames = games.filter((game) => !game.isPlayer && !game.isCreator);
+
+  // Apply filter to my games
+  const filterMyGames = (gameList: Game[]) => {
+    switch (filter) {
+      case 'open':
+        return gameList.filter(g => g.status === 'waiting' || g.status === 'full' || g.status === 'flipping' || (g.status === 'completed' && g.canClaim));
+      case 'claimed':
+        return gameList.filter(g => g.status === 'completed' && !g.canClaim);
+      case 'win':
+        return gameList.filter(g => g.isWinner && g.status === 'completed');
+      case 'lose':
+        return gameList.filter(g => !g.isWinner && g.status === 'completed' && g.winner);
+      default:
+        return gameList;
+    }
+  };
 
   // Sort: active games first
   const sortGames = (gameList: Game[]) => {
@@ -315,10 +332,17 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
     });
   };
 
-  const sortedMyGames = sortGames(myGames);
-  const sortedOtherGames = sortGames(otherGames);
+  const filteredMyGames = sortGames(filterMyGames(myGames));
+  const sortedOtherGames = sortGames(otherGames.filter(g => g.status === 'waiting'));
 
   const showLoading = loading && games.length === 0;
+
+  const filterButtons: { key: FilterType; label: string }[] = [
+    { key: 'open', label: 'Open' },
+    { key: 'win', label: 'Win' },
+    { key: 'lose', label: 'Lose' },
+    { key: 'claimed', label: 'Claimed' },
+  ];
 
   return (
     <div className="mt-6 space-y-6">
@@ -330,24 +354,48 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
       )}
 
       {/* My Games Section */}
-      {!showLoading && sortedMyGames.length > 0 && (
+      {!showLoading && myGames.length > 0 && (
         <div>
-          <h2 className="text-lg font-bold text-white mb-3">
-            My Games
-            <span className="text-white/50 text-sm font-normal ml-2">({sortedMyGames.length})</span>
-          </h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {sortedMyGames.map((game) => (
-              <GameCard
-                key={game.id}
-                game={game}
-                onJoin={(side) => onJoinGame(game.id, side)}
-                onClaim={() => onClaimReward(game.id)}
-                onCancel={() => onCancelGame(game.id)}
-                currentAddress={currentAddress}
-              />
-            ))}
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-lg font-bold text-white">
+              My Games
+              <span className="text-white/50 text-sm font-normal ml-2">({filteredMyGames.length})</span>
+            </h2>
+            {/* Filter Buttons */}
+            <div className="flex gap-1">
+              {filterButtons.map(({ key, label }) => (
+                <button
+                  key={key}
+                  onClick={() => setFilter(key)}
+                  className={`px-3 py-1 text-xs rounded-full transition-all ${
+                    filter === key
+                      ? 'bg-white/20 text-white'
+                      : 'bg-white/5 text-white/50 hover:bg-white/10'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
+          {filteredMyGames.length > 0 ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {filteredMyGames.map((game) => (
+                <GameCard
+                  key={game.id}
+                  game={game}
+                  onJoin={(side) => onJoinGame(game.id, side)}
+                  onClaim={() => onClaimReward(game.id)}
+                  onCancel={() => onCancelGame(game.id)}
+                  currentAddress={currentAddress}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="text-center py-4 bg-white/5 rounded-xl">
+              <p className="text-white/40 text-sm">No {filter} games</p>
+            </div>
+          )}
         </div>
       )}
 

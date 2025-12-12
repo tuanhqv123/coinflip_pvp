@@ -3,6 +3,7 @@ import { ConnectButton, useCurrentAccount, useDisconnectWallet } from '@mysten/d
 import { formatBalance, shortenAddress } from '../../utils/address';
 import { useBalance } from '../../hooks/useBalance';
 import { Avatar } from './Avatar';
+import { FlippingCoin3D } from '../game/PixelCoin';
 import suiSymbol from '../../assets/Sui_Symbol_White.png';
 
 interface HeaderProps {
@@ -22,7 +23,12 @@ export const Header: React.FC<HeaderProps> = ({
 
   return (
     <header className="header">
-      <h1 className="logo">{title}</h1>
+      <div className="flex items-center gap-1">
+        <div className="w-12 h-12 flex items-center justify-center">
+          <FlippingCoin3D size="medium" />
+        </div>
+        <h1 className="logo text-2xl">{title}</h1>
+      </div>
 
       {currentAccount ? (
         <div className="wallet-info flex items-center gap-3">

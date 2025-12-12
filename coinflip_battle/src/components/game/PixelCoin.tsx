@@ -99,14 +99,14 @@ export const FlippingCoin3D: React.FC<FlippingCoin3DProps> = ({
   size = 'large',
 }) => {
   const sizeClasses = {
-    small: 'w-12 h-12',
-    medium: 'w-20 h-20',
-    large: 'w-32 h-32',
+    small: 'w-8 h-8',
+    medium: 'w-12 h-12',
+    large: 'w-24 h-24',
   };
 
   return (
-    <div className={`${sizeClasses[size]} perspective-500`}>
-      <div className="coin-3d-container">
+    <div className={`${sizeClasses[size]} perspective-500 flex items-center justify-center`}>
+      <div className="coin-3d-container relative">
         {/* Front - Heads (Gold) */}
         <div className="coin-3d-face coin-3d-front">
           <CoinFace side="heads" />

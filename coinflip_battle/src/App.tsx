@@ -59,34 +59,43 @@ function App() {
   // Process ONE game at a time to avoid wallet object locking conflicts
   const processFullGames = useCallback(async () => {
     // Find the first game that needs processing
-    const gameToProcess = games.find(game => 
-      (game.status === 'full' || game.status === 'flipping') &&
-      !game.winner &&
-      game.currentPlayers === game.maxPlayers &&
-      !processingRef.current.has(game.id)
+    const gameToProcess = games.find(
+      (game) =>
+        (game.status === 'full' || game.status === 'flipping') &&
+        !game.winner &&
+        game.currentPlayers === game.maxPlayers &&
+        !processingRef.current.has(game.id)
     );
 
     if (!gameToProcess) return;
 
     // Mark as processing immediately
     processingRef.current.add(gameToProcess.id);
-    console.log('Auto-processing game:', gameToProcess.id, 'status:', gameToProcess.status);
+    console.log(
+      'Auto-processing game:',
+      gameToProcess.id,
+      'status:',
+      gameToProcess.status
+    );
 
     try {
       const result = await manualProcessGame(client, gameToProcess.id);
       if (result) {
         console.log('Game processed! Winner:', result.winner);
-        // Refresh and process next game
-        setTimeout(() => refreshGames(), 1000);
       }
     } catch (err) {
       console.error('Error processing game:', err);
       // Remove from processing set so it can be retried
       processingRef.current.delete(gameToProcess.id);
     }
+
+    // Always refresh and try to process next game after a delay
+    setTimeout(() => {
+      refreshGames();
+    }, 2000);
   }, [games, client, refreshGames]);
 
-  // Check for full games to process
+  // Check for full games to process on games change
   useEffect(() => {
     processFullGames();
   }, [processFullGames]);

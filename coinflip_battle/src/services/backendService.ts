@@ -133,15 +133,73 @@ export const processFullGame = async (
       ],
     });
 
-    const result = await client.signAndExecuteTransaction({
-      transaction: tx,
-      signer: backendKeypair,
+    // Get available gas coins for backend wallet
+    const backendAddress = backendKeypair.getPublicKey().toSuiAddress();
+    const coins = await client.getCoins({
+      owner: backendAddress,
+      coinType: '0x2::sui::SUI',
     });
 
-    console.log('set_winner transaction:', result.digest);
+    if (coins.data.length === 0) {
+      throw new Error('Backend wallet has no SUI for gas. Please fund it.');
+    }
 
-    return { winner, blobId };
-  } catch (error) {
+    console.log('Available coins:', coins.data.map(c => ({ id: c.coinObjectId, balance: c.balance })));
+
+    // Try each coin until one works (skip locked coins)
+    let lastError: Error | null = null;
+    
+    // Try coins in reverse order (newest first)
+    for (let i = coins.data.length - 1; i >= 0; i--) {
+      const gasCoin = coins.data[i];
+      console.log('Trying gas coin:', gasCoin.coinObjectId, 'balance:', gasCoin.balance);
+      
+      try {
+        // Create fresh transaction for each attempt
+        const attemptTx = new Transaction();
+        attemptTx.moveCall({
+          target: `${CONTRACT_CONFIG.PACKAGE_ID}::${CONTRACT_CONFIG.MODULE_NAME}::set_winner`,
+          arguments: [
+            attemptTx.object(gameId),
+            attemptTx.pure.address(winner),
+            attemptTx.pure.vector('u8', Array.from(blobIdToBytes(blobId))),
+          ],
+        });
+        
+        attemptTx.setGasPayment([{
+          objectId: gasCoin.coinObjectId,
+          version: gasCoin.version,
+          digest: gasCoin.digest,
+        }]);
+
+        const result = await client.signAndExecuteTransaction({
+          transaction: attemptTx,
+          signer: backendKeypair,
+        });
+
+        console.log('set_winner transaction:', result.digest);
+        return { winner, blobId };
+      } catch (err: unknown) {
+        const errMsg = (err as Error).message || String(err);
+        if (errMsg.includes('already locked')) {
+          console.log('Coin locked, trying next...', gasCoin.coinObjectId);
+          lastError = err as Error;
+          continue;
+        }
+        // Other error, throw immediately
+        throw err;
+      }
+    }
+
+    // All coins failed
+    throw lastError || new Error('All gas coins are locked');
+  } catch (error: unknown) {
+    const errorMsg = (error as Error).message || String(error);
+    
+    if (errorMsg.includes('already locked')) {
+      console.error('All gas coins are locked. Please send more SUI to backend wallet:', backendKeypair?.getPublicKey().toSuiAddress());
+    }
+    
     console.error('Error processing full game:', error);
     return null;
   }
