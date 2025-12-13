@@ -1,12 +1,12 @@
 /**
- * Backend Service - Handles winner selection and encryption
+ * Backend Service - Handles result encryption
  *
  * Flow:
- * 1. Listen for GameFull events
- * 2. Pick random winner from players
- * 3. Encrypt winner with Seal (using unlock_ms as identity)
+ * 1. Listen for GameFull events (result already determined on-chain)
+ * 2. Read result from contract (coin flip result and winners)
+ * 3. Encrypt result with Seal (using unlock_ms as identity)
  * 4. Upload encrypted data to Walrus
- * 5. Call set_winner on contract
+ * 5. Call set_blob_id on contract
  */
 
 import { SuiClient, EventId } from '@mysten/sui/client';
@@ -15,7 +15,7 @@ import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { CONTRACT_CONFIG } from '../config/constants';
 import { initSealClient, encryptWithSeal } from './sealService';
 import { uploadToWalrus, blobIdToBytes } from './walrusService';
-import type { EncryptedWinnerData, GameFullEvent } from '../types/game';
+import type { EncryptedResultData, GameFullEvent } from '../types/game';
 import { decodeSuiPrivateKey } from '@mysten/sui/cryptography';
 import { fromBase64 } from '@mysten/sui/utils';
 
@@ -49,7 +49,6 @@ export const initBackendWallet = (): string | null => {
     }
 
     const address = backendKeypair.getPublicKey().toSuiAddress();
-    console.log('Backend wallet initialized:', address);
 
     return address;
   } catch (error) {
@@ -68,67 +67,53 @@ export const isBackendReady = (): boolean => {
   return backendKeypair !== null;
 };
 
-// Pick random winner from players
-export const pickRandomWinner = (players: string[]): string => {
-  const randomIndex = Math.floor(Math.random() * players.length);
-  return players[randomIndex];
-};
-
-// Encode winner data to bytes
-const encodeWinnerData = (data: EncryptedWinnerData): Uint8Array => {
+// Encode game result data to bytes
+const encodeResultData = (data: EncryptedResultData): Uint8Array => {
   const json = JSON.stringify(data);
   return new TextEncoder().encode(json);
 };
 
-// Process a full game - pick winner, encrypt, upload, set on chain
+// Process a full game - read result, encrypt, upload, set on chain
 export const processFullGame = async (
   client: SuiClient,
   gameId: string,
-  players: string[],
-  unlockMs: bigint
-): Promise<{ winner: string; blobId: string } | null> => {
+  gameData: {
+    coinResult: number;
+    winners: string[];
+    unlockMs: bigint;
+  }
+): Promise<{ blobId: string } | null> => {
   if (!backendKeypair) {
     console.error('Backend wallet not initialized');
     return null;
   }
 
   try {
-    console.log('Processing full game:', gameId);
-    console.log('Players:', players);
-    console.log('Unlock time:', new Date(Number(unlockMs)).toISOString());
 
     // Initialize Seal client
     initSealClient(client);
 
-    // 1. Pick random winner
-    const winner = pickRandomWinner(players);
-    console.log('Selected winner:', winner);
-
-    // 2. Create winner data
-    const winnerData: EncryptedWinnerData = {
-      winner,
+    // 1. Create result data
+    const resultData: EncryptedResultData = {
+      coinResult: gameData.coinResult,
+      winners: gameData.winners,
       gameId,
       timestamp: Date.now(),
     };
 
-    // 3. Encode and encrypt with Seal (REQUIRED - no fallback)
-    const encodedData = encodeWinnerData(winnerData);
-    
-    console.log('Encrypting winner data with Seal...');
-    const encryptedData = await encryptWithSeal(encodedData, unlockMs);
-    console.log('Data encrypted with Seal successfully');
+    // 2. Encode and encrypt with Seal (REQUIRED - no fallback)
+    const encodedData = encodeResultData(resultData);
+    const encryptedData = await encryptWithSeal(encodedData, gameData.unlockMs);
 
-    // 4. Upload to Walrus
+    // 3. Upload to Walrus
     const blobId = await uploadToWalrus(encryptedData);
-    console.log('Uploaded to Walrus, blob ID:', blobId);
 
-    // 5. Call set_winner on contract
+    // 4. Call set_blob_id on contract
     const tx = new Transaction();
     tx.moveCall({
-      target: `${CONTRACT_CONFIG.PACKAGE_ID}::${CONTRACT_CONFIG.MODULE_NAME}::set_winner`,
+      target: `${CONTRACT_CONFIG.PACKAGE_ID}::${CONTRACT_CONFIG.MODULE_NAME}::set_blob_id`,
       arguments: [
         tx.object(gameId),
-        tx.pure.address(winner),
         tx.pure.vector('u8', Array.from(blobIdToBytes(blobId))),
       ],
     });
@@ -144,24 +129,20 @@ export const processFullGame = async (
       throw new Error('Backend wallet has no SUI for gas. Please fund it.');
     }
 
-    console.log('Available coins:', coins.data.map(c => ({ id: c.coinObjectId, balance: c.balance })));
-
     // Try each coin until one works (skip locked coins)
     let lastError: Error | null = null;
     
     // Try coins in reverse order (newest first)
     for (let i = coins.data.length - 1; i >= 0; i--) {
       const gasCoin = coins.data[i];
-      console.log('Trying gas coin:', gasCoin.coinObjectId, 'balance:', gasCoin.balance);
       
       try {
         // Create fresh transaction for each attempt
         const attemptTx = new Transaction();
         attemptTx.moveCall({
-          target: `${CONTRACT_CONFIG.PACKAGE_ID}::${CONTRACT_CONFIG.MODULE_NAME}::set_winner`,
+          target: `${CONTRACT_CONFIG.PACKAGE_ID}::${CONTRACT_CONFIG.MODULE_NAME}::set_blob_id`,
           arguments: [
             attemptTx.object(gameId),
-            attemptTx.pure.address(winner),
             attemptTx.pure.vector('u8', Array.from(blobIdToBytes(blobId))),
           ],
         });
@@ -172,17 +153,15 @@ export const processFullGame = async (
           digest: gasCoin.digest,
         }]);
 
-        const result = await client.signAndExecuteTransaction({
+        await client.signAndExecuteTransaction({
           transaction: attemptTx,
           signer: backendKeypair,
         });
 
-        console.log('set_winner transaction:', result.digest);
-        return { winner, blobId };
+        return { blobId };
       } catch (err: unknown) {
         const errMsg = (err as Error).message || String(err);
         if (errMsg.includes('already locked')) {
-          console.log('Coin locked, trying next...', gasCoin.coinObjectId);
           lastError = err as Error;
           continue;
         }
@@ -193,14 +172,7 @@ export const processFullGame = async (
 
     // All coins failed
     throw lastError || new Error('All gas coins are locked');
-  } catch (error: unknown) {
-    const errorMsg = (error as Error).message || String(error);
-    
-    if (errorMsg.includes('already locked')) {
-      console.error('All gas coins are locked. Please send more SUI to backend wallet:', backendKeypair?.getPublicKey().toSuiAddress());
-    }
-    
-    console.error('Error processing full game:', error);
+  } catch {
     return null;
   }
 };
@@ -209,8 +181,6 @@ export const processFullGame = async (
 export const startEventListener = async (
   client: SuiClient
 ): Promise<() => void> => {
-  console.log('Starting event listener for GameFull events...');
-
   let lastCursor: EventId | null = null;
   let running = true;
   const processedGames = new Set<string>();
@@ -234,7 +204,7 @@ export const startEventListener = async (
           // Skip if already processed
           if (processedGames.has(gameId)) continue;
 
-          // Check if winner already set
+          // Check if blob_id already set
           const gameObj = await client.getObject({
             id: gameId,
             options: { showContent: true },
@@ -245,21 +215,26 @@ export const startEventListener = async (
               gameObj.data.content as { fields: Record<string, unknown> }
             ).fields;
 
-            // Only process if winner not set yet
-            if (!fields.winner) {
-              console.log('Processing new full game:', gameId);
+            // Only process if blob_id not set yet (but result is available)
+            if (!fields.blob_id && fields.coin_result !== null && fields.winners) {
+              // Check if we're already processing this game
+              if (!processedGames.has(gameId)) {
+                const result = await processFullGame(
+                  client,
+                  gameId,
+                  {
+                    coinResult: Number(fields.coin_result),
+                    winners: fields.winners as string[],
+                    unlockMs: BigInt(eventData.unlock_ms),
+                  }
+                );
 
-              const result = await processFullGame(
-                client,
-                gameId,
-                eventData.players,
-                BigInt(eventData.unlock_ms)
-              );
-
-              if (result) {
-                processedGames.add(gameId);
+                if (result) {
+                  processedGames.add(gameId);
+                }
               }
             } else {
+              // Already processed or not ready
               processedGames.add(gameId);
             }
           }
@@ -269,7 +244,7 @@ export const startEventListener = async (
           lastCursor = events.nextCursor;
         }
       } catch (error) {
-        console.error('Event polling error:', error);
+        // Silent error handling for polling
       }
 
       // Wait before next poll
@@ -290,7 +265,7 @@ export const startEventListener = async (
 export const manualProcessGame = async (
   client: SuiClient,
   gameId: string
-): Promise<{ winner: string; blobId: string } | null> => {
+): Promise<{ blobId: string } | null> => {
   if (!backendKeypair) {
     console.error('Backend wallet not configured. Set VITE_BACKEND_PRIVATE_KEY in .env');
     return null;
@@ -298,7 +273,6 @@ export const manualProcessGame = async (
 
   // Check if already processing another game
   if (isProcessing) {
-    console.log('Already processing another game, skipping:', gameId);
     return null;
   }
 
@@ -319,23 +293,28 @@ export const manualProcessGame = async (
       gameObj.data.content as { fields: Record<string, unknown> }
     ).fields;
 
-    if (fields.winner) {
-      console.log('Winner already set for game:', gameId);
+    if (fields.blob_id) {
       return null;
     }
 
     if (!fields.game_started) {
-      throw new Error('Game not started yet');
+      return null;
+    }
+
+    if (fields.coin_result === null || !fields.winners) {
+      return null;
     }
 
     return await processFullGame(
       client,
       gameId,
-      fields.players as string[],
-      BigInt(fields.unlock_ms as string)
+      {
+        coinResult: Number(fields.coin_result),
+        winners: fields.winners as string[],
+        unlockMs: BigInt(fields.unlock_ms as string),
+      }
     );
   } catch (error) {
-    console.error('Manual process error:', error);
     return null;
   } finally {
     // Release processing lock

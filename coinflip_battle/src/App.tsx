@@ -4,6 +4,7 @@ import { BetPanel } from './components/game/BetPanel';
 import { GameLobby } from './components/game/GameLobby';
 import { useCurrentAccount, useSuiClient } from '@mysten/dapp-kit';
 import { useGame } from './hooks/useGame';
+import { useSealSession } from './hooks/useSealSession';
 import { CONTRACT_CONFIG } from './config/constants';
 import {
   initBackendWallet,
@@ -15,6 +16,14 @@ import { suiToMist } from './services/suiService';
 function App() {
   const currentAccount = useCurrentAccount();
   const client = useSuiClient();
+  
+  const {
+    sessionKey,
+    isCreating: isCreatingSealSession,
+    error: sealError,
+    createSessionKey,
+  } = useSealSession();
+
   const {
     games,
     loading,
@@ -24,17 +33,23 @@ function App() {
     claimReward,
     cancelRoom,
     refreshGames,
-  } = useGame();
+    decryptingGames,
+  } = useGame(sessionKey);
 
   const processingRef = useRef<Set<string>>(new Set()); // Ref for immediate check
 
   // Initialize backend wallet (always needed for processing)
   useEffect(() => {
-    const address = initBackendWallet();
-    if (address) {
-      console.log('Backend wallet ready:', address);
-    }
+    initBackendWallet();
   }, []);
+
+  // Create Seal session key when wallet connects
+  useEffect(() => {
+    if (currentAccount && !sessionKey && !isCreatingSealSession) {
+      // Auto-create session key when user connects wallet
+      createSessionKey();
+    }
+  }, [currentAccount, sessionKey, isCreatingSealSession, createSessionKey]);
 
   // Start event listener only if BACKEND_ENABLED
   useEffect(() => {
@@ -44,47 +59,38 @@ function App() {
 
     const start = async () => {
       cleanup = await startEventListener(client);
-      console.log('Backend event listener started');
     };
 
     start();
 
     return () => {
       if (cleanup) cleanup();
-      console.log('Backend event listener stopped');
     };
   }, [client]);
 
-  // Auto-process games that are full/flipping but don't have a winner yet
+  // Auto-process games that are full/flipping but don't have winners yet
   // Process ONE game at a time to avoid wallet object locking conflicts
   const processFullGames = useCallback(async () => {
     // Find the first game that needs processing
     const gameToProcess = games.find(
-      (game) =>
-        (game.status === 'full' || game.status === 'flipping') &&
-        !game.winner &&
-        game.currentPlayers === game.maxPlayers &&
-        !processingRef.current.has(game.id)
+      (game) => {
+        const needsProcessing = (game.status === 'full' || game.status === 'flipping') &&
+          !game.blobId && // No blob_id means backend hasn't processed it yet
+          game.currentPlayers === game.maxPlayers &&
+          !processingRef.current.has(game.id);
+        
+        return needsProcessing;
+      }
     );
 
     if (!gameToProcess) return;
 
     // Mark as processing immediately
     processingRef.current.add(gameToProcess.id);
-    console.log(
-      'Auto-processing game:',
-      gameToProcess.id,
-      'status:',
-      gameToProcess.status
-    );
 
     try {
-      const result = await manualProcessGame(client, gameToProcess.id);
-      if (result) {
-        console.log('Game processed! Winner:', result.winner);
-      }
+      await manualProcessGame(client, gameToProcess.id);
     } catch (err) {
-      console.error('Error processing game:', err);
       // Remove from processing set so it can be retried
       processingRef.current.delete(gameToProcess.id);
     }
@@ -92,7 +98,7 @@ function App() {
     // Always refresh and try to process next game after a delay
     setTimeout(() => {
       refreshGames();
-    }, 2000);
+    }, 3000); // Increased delay to reduce rate limiting
   }, [games, client, refreshGames]);
 
   // Check for full games to process on games change
@@ -110,11 +116,7 @@ function App() {
       return;
     }
 
-    console.log('Creating game with side:', bet.side, 'amount:', bet.amount, 'maxPlayers:', bet.maxPlayers);
-    const result = await createRoom(bet.maxPlayers, bet.side, bet.amount);
-    if (result) {
-      console.log('Game created:', result);
-    }
+    await createRoom(bet.maxPlayers, bet.side, bet.amount);
   };
 
   const handleJoinGame = async (gameId: string, side: 'heads' | 'tails' = 'tails') => {
@@ -132,7 +134,6 @@ function App() {
     const stakeMist = suiToMist(parseFloat(game.stakePerPlayer));
     const success = await joinRoom(gameId, game.escrowId, side, stakeMist);
     if (success) {
-      console.log('Joined game:', gameId);
       // Trigger refresh to check if game is now full
       setTimeout(() => refreshGames(), 2000);
     }
@@ -142,20 +143,14 @@ function App() {
     const game = games.find((g) => g.id === gameId);
     if (!game) return;
 
-    const success = await claimReward(gameId, game.escrowId);
-    if (success) {
-      console.log('Reward claimed:', gameId);
-    }
+    await claimReward(gameId, game.escrowId);
   };
 
   const handleCancelGame = async (gameId: string) => {
     const game = games.find((g) => g.id === gameId);
     if (!game) return;
 
-    const success = await cancelRoom(gameId, game.escrowId);
-    if (success) {
-      console.log('Game cancelled:', gameId);
-    }
+    await cancelRoom(gameId, game.escrowId);
   };
 
   // Convert games to lobby format
@@ -177,12 +172,16 @@ function App() {
     totalStake: game.totalStake,
     status: game.status,
     createdAt: game.createdAt,
-    winner: game.winner,
+    winner: game.winners && game.winners.length > 0 ? game.winners[0] : null, // First winner for backward compatibility
+    winners: game.winners || [], // Ensure winners is always an array
+    coinResult: game.coinResult,
     unlockMs: game.unlockMs,
     timeUntilUnlock: game.timeUntilUnlock,
     canClaim: game.canClaim,
+    rewardPerWinner: game.rewardPerWinner,
+    blobId: game.blobId, // Add blobId for backend processing check
     isCreator: currentAccount?.address === game.creator.address,
-    isWinner: currentAccount?.address === game.winner,
+    isWinner: game.winners?.includes(currentAccount?.address || '') || false,
     isPlayer: game.players.some((p) => p.address === currentAccount?.address),
   }));
 
@@ -192,9 +191,9 @@ function App() {
 
       <main className="main-content">
         {/* Status Bar */}
-        {error && (
+        {(error || sealError) && (
           <div className="bg-red-500/20 border border-red-500/50 rounded-lg p-3 mb-4">
-            <p className="text-red-400 text-sm">{error}</p>
+            <p className="text-red-400 text-sm">{error || sealError}</p>
           </div>
         )}
 
@@ -209,6 +208,7 @@ function App() {
           onCancelGame={handleCancelGame}
           loading={loading}
           currentAddress={currentAccount?.address}
+          decryptingGames={decryptingGames}
         />
 
         {/* Refresh Button */}

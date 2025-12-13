@@ -1,31 +1,37 @@
-/// Multi-player Coin Flip Game - Winner Takes All
-/// 
+/// Multi-player Coin Flip Game - Winners Split Pot
+///
 /// FLOW:
 /// 1. Creator: create_room(max_players, stake) → deposits stake, room is PUBLIC
 /// 2. Players: join_room() → deposit same stake
 /// 3. When room is full:
+///    - Contract uses on-chain randomness to determine result (heads/tails)
+///    - Contract immediately identifies all winners (players who chose correctly)
 ///    - Contract sets unlock_ms = now + LOCK_DURATION
-///    - Backend picks random winner, encrypts with Seal
+///    - Backend encrypts result with Seal
 ///    - Backend uploads to Walrus → blob_id
 ///    - Backend calls set_blob_id()
 /// 4. During locktime (5s):
 ///    - UI shows coin flipping animation
-///    - No one can decrypt winner (Seal rejects)
+///    - No one can decrypt result (Seal rejects)
 /// 5. After unlock:
-///    - Anyone can decrypt winner from Walrus
-///    - ONLY WINNER can call claim_reward() to get all funds
-/// 
+///    - Anyone can decrypt result from Walrus
+///    - ALL WINNERS can claim their share (total_stake / number_of_winners)
+///
 /// SECURITY:
 /// - Games are PUBLIC (everyone can see game list)
-/// - Seal only locks winner identity
-/// - Only verified winner can claim
-/// - Winner takes ALL (100% of pool)
-#[allow(lint(coin_field, public_entry))]
+/// - Result determined by on-chain randomness (NOT backend!)
+/// - Winners split the pot equally
+/// - Seal only locks the result for excitement
+#[allow(lint(coin_field, public_entry, public_random))]
 module coinflip_battle_move::game {
     use sui::coin::{Self, Coin};
     use sui::sui::SUI;
     use sui::event;
-    use sui::clock::Clock;
+    use sui::clock::{Self, Clock};
+    use sui::random::{Self, Random};
+    use sui::bcs;
+    use std::option;
+    use std::vector;
 
     // ============ Errors ============
     const E_INVALID_MAX_PLAYERS: u64 = 1;
@@ -42,7 +48,8 @@ module coinflip_battle_move::game {
     const E_BLOB_ALREADY_SET: u64 = 12;
     const E_BLOB_NOT_SET: u64 = 13;
     const E_INVALID_SEAL_ID: u64 = 14;
-    const E_WINNER_NOT_SET: u64 = 15;
+    const E_RESULT_NOT_SET: u64 = 15;
+    const E_NO_WINNERS: u64 = 16;
 
     // ============ Constants ============
     const MIN_PLAYERS: u8 = 2;
@@ -53,7 +60,7 @@ module coinflip_battle_move::game {
     // ============ Structs ============
     
     /// Game room - PUBLIC shared object (everyone can see)
-    public struct FlipGame has key {
+    public struct FlipGame has key, store {
         id: UID,
         creator: address,
         max_players: u8,
@@ -64,10 +71,12 @@ module coinflip_battle_move::game {
         total_stake: u64,
         /// Timestamp when claim becomes available
         unlock_ms: u64,
-        /// Walrus blob_id containing encrypted winner (Seal locked)
+        /// Walrus blob_id containing encrypted result (Seal locked)
         blob_id: Option<vector<u8>>,
-        /// Winner address (set by backend after picking)
-        winner: Option<address>,
+        /// Coin flip result: 0 = heads, 1 = tails (determined by randomness)
+        coin_result: Option<u8>,
+        /// List of all winners (players who chose correctly)
+        winners: Option<vector<address>>,
         /// Game state
         game_started: bool,
         claimed: bool,
@@ -75,7 +84,7 @@ module coinflip_battle_move::game {
     }
 
     /// Escrow holding all funds
-    public struct GameEscrow has key {
+    public struct GameEscrow has key, store {
         id: UID,
         game_id: ID,
         funds: Coin<SUI>,
@@ -98,18 +107,21 @@ module coinflip_battle_move::game {
         max_players: u8,
     }
 
-    /// Backend listens to this event to pick winner
+    /// Emitted when game is full and result is determined
     public struct GameFull has copy, drop {
         game_id: ID,
         players: vector<address>,
         total_stake: u64,
         unlock_ms: u64,
+        coin_result: u8,
+        winners: vector<address>,
     }
 
-    /// Emitted when backend sets winner + blob_id
-    public struct WinnerSet has copy, drop {
+    /// Emitted when backend sets encrypted result blob_id
+    public struct ResultSet has copy, drop {
         game_id: ID,
-        winner: address,
+        coin_result: u8,
+        winners: vector<address>,
         blob_id: vector<u8>,
         unlock_ms: u64,
     }
@@ -167,10 +179,11 @@ module coinflip_battle_move::game {
             total_stake: stake_per_player,
             unlock_ms: 0,
             blob_id: option::none(),
-            winner: option::none(),
+            coin_result: option::none(),
+            winners: option::none(),
             game_started: false,
             claimed: false,
-            created_at: sui::clock::timestamp_ms(clock),
+            created_at: clock::timestamp_ms(clock),
         };
 
         let escrow_uid = object::new(ctx);
@@ -194,7 +207,7 @@ module coinflip_battle_move::game {
     }
 
     /// Join an existing game room
-    /// When full → emits GameFull event for backend
+    /// When full → determines result, emits GameFull event for backend
     /// side: 0 = heads, 1 = tails
     public entry fun join_room(
         game: &mut FlipGame,
@@ -202,6 +215,7 @@ module coinflip_battle_move::game {
         side: u8,
         payment: Coin<SUI>,
         clock: &Clock,
+        random: &Random,
         ctx: &mut TxContext
     ) {
         let player = ctx.sender();
@@ -228,11 +242,34 @@ module coinflip_battle_move::game {
             max_players: game.max_players,
         });
 
-        // Room full → start game, emit event for backend
+        // Room full → determine result, emit event for backend
         if (new_count == (game.max_players as u64)) {
-            let now = sui::clock::timestamp_ms(clock);
+            let now = clock::timestamp_ms(clock);
             game.game_started = true;
             game.unlock_ms = now + LOCK_DURATION_MS;
+
+            // Use on-chain randomness to determine coin flip result
+            let mut generator = random::new_generator(random, ctx);
+            let random_value = generator.generate_u64();
+            let coin_result = if (random_value % 2 == 0) SIDE_HEADS else SIDE_TAILS;
+
+            // Find all winners (players who chose correctly)
+            let mut winners = vector::empty<address>();
+            let mut i = 0;
+            while (i < new_count) {
+                let player_side = *vector::borrow(&game.player_sides, i);
+                if (player_side == coin_result) {
+                    vector::push_back(&mut winners, *vector::borrow(&game.players, i));
+                };
+                i = i + 1;
+            };
+
+            // Ensure we have at least one winner (should always be true)
+            assert!(vector::length(&winners) > 0, E_NO_WINNERS);
+
+            // Store result and winners
+            option::fill(&mut game.coin_result, coin_result);
+            option::fill(&mut game.winners, winners);
 
             // Backend listens to this!
             event::emit(GameFull {
@@ -240,93 +277,105 @@ module coinflip_battle_move::game {
                 players: game.players,
                 total_stake: game.total_stake,
                 unlock_ms: game.unlock_ms,
+                coin_result,
+                winners: *option::borrow(&game.winners),
             });
         };
     }
 
-    /// Backend sets winner and blob_id after picking random winner
-    /// Called by backend wallet after:
-    /// 1. Picking random winner from players
-    /// 2. Encrypting winner with Seal (using unlock_ms)
-    /// 3. Uploading to Walrus
-    public entry fun set_winner(
+    /// Backend sets encrypted blob_id after game result is determined
+    /// Called by backend wallet after uploading to Walrus
+    public entry fun set_blob_id(
         game: &mut FlipGame,
-        winner: address,
         blob_id: vector<u8>,
     ) {
         assert!(game.game_started, E_GAME_NOT_STARTED);
-        assert!(option::is_none(&game.winner), E_BLOB_ALREADY_SET);
-        assert!(vector::contains(&game.players, &winner), E_NOT_WINNER);
+        assert!(option::is_some(&game.coin_result), E_RESULT_NOT_SET);
+        assert!(option::is_none(&game.blob_id), E_BLOB_ALREADY_SET);
         assert!(vector::length(&blob_id) > 0, E_BLOB_NOT_SET);
 
-        option::fill(&mut game.winner, winner);
         option::fill(&mut game.blob_id, blob_id);
 
-        event::emit(WinnerSet {
+        event::emit(ResultSet {
             game_id: object::uid_to_inner(&game.id),
-            winner,
+            coin_result: *option::borrow(&game.coin_result),
+            winners: *option::borrow(&game.winners),
             blob_id,
             unlock_ms: game.unlock_ms,
         });
     }
 
-    /// Winner claims reward - ONLY WINNER CAN CALL
+    /// Winner claims reward - ANY WINNER CAN CALL
     /// After unlock_ms, winner decrypts from Walrus and claims
     public entry fun claim_reward(
         game: FlipGame,
-        escrow: GameEscrow,
+        mut escrow: GameEscrow,
         clock: &Clock,
         ctx: &mut TxContext
     ) {
         let caller = ctx.sender();
-        let now = sui::clock::timestamp_ms(clock);
-        
+        let now = clock::timestamp_ms(clock);
+
         // Validations
         assert!(game.game_started, E_GAME_NOT_STARTED);
-        assert!(option::is_some(&game.winner), E_WINNER_NOT_SET);
+        assert!(option::is_some(&game.coin_result), E_RESULT_NOT_SET);
         assert!(now >= game.unlock_ms, E_TOO_EARLY);
         assert!(!game.claimed, E_ALREADY_CLAIMED);
-        
+
         // ONLY WINNER can claim
-        let winner = *option::borrow(&game.winner);
-        assert!(caller == winner, E_NOT_WINNER);
+        let winners = option::borrow(&game.winners);
+        assert!(vector::contains(winners, &caller), E_NOT_WINNER);
         assert!(object::uid_to_inner(&game.id) == escrow.game_id, E_WRONG_AMOUNT);
 
-        let FlipGame {
-            id: game_uid,
-            creator: _,
-            max_players: _,
-            players: _,
-            player_sides: _,
-            stake_per_player: _,
-            total_stake,
-            unlock_ms: _,
-            blob_id: _,
-            winner: _,
-            game_started: _,
-            claimed: _,
-            created_at: _,
-        } = game;
+        // Calculate reward per winner
+        let num_winners = vector::length(winners);
+        let reward_per_winner = game.total_stake / (num_winners as u64);
+        let creator = game.creator;
+        let game_id = object::uid_to_inner(&game.id);
 
-        let game_id = object::uid_to_inner(&game_uid);
-        let GameEscrow { id: escrow_uid, game_id: _, funds } = escrow;
-
-        // Winner takes ALL (100% of pool)
-        transfer::public_transfer(funds, winner);
+        // Winner claims their share by splitting from escrow
+        let reward = coin::split(&mut escrow.funds, reward_per_winner, ctx);
+        transfer::public_transfer(reward, caller);
 
         event::emit(RewardClaimed {
             game_id,
-            winner,
-            amount: total_stake,
+            winner: caller,
+            amount: reward_per_winner,
             claimed_at: now,
         });
 
-        // Delete objects
+        // Extract remaining funds from escrow and delete escrow
+        let GameEscrow { id: escrow_id, game_id: _, funds } = escrow;
+        object::delete(escrow_id);
+
+        // For now, transfer remaining funds to creator for simplicity
+        if (coin::value(&funds) > 0) {
+            transfer::public_transfer(funds, creator);
+        } else {
+            coin::destroy_zero(funds);
+        };
+
+        // Delete game object
+        let FlipGame { 
+            id: game_uid, 
+            creator: _, 
+            max_players: _, 
+            players: _, 
+            player_sides: _, 
+            stake_per_player: _, 
+            total_stake: _, 
+            unlock_ms: _, 
+            blob_id: _, 
+            coin_result: _, 
+            winners: _, 
+            game_started: _, 
+            claimed: _, 
+            created_at: _ 
+        } = game;
         object::delete(game_uid);
-        object::delete(escrow_uid);
     }
 
-    /// Cancel game room - ONLY creator, ONLY before game starts
+    /// Cancel game room - ONLY creator, ONLY when no other players joined
     public entry fun cancel_room(
         game: FlipGame,
         escrow: GameEscrow,
@@ -334,73 +383,73 @@ module coinflip_battle_move::game {
     ) {
         assert!(ctx.sender() == game.creator, E_NOT_CREATOR);
         assert!(!game.game_started, E_GAME_STARTED);
+        
+        // Can only cancel if creator is the only player (no one else joined)
+        let num_players = vector::length(&game.players);
+        assert!(num_players == 1, E_GAME_STARTED); // Reuse error - means others joined
 
-        let FlipGame { 
-            id: game_uid, 
-            creator: _, 
-            max_players: _,
-            players,
-            player_sides: _,
-            stake_per_player,
-            total_stake: _,
-            unlock_ms: _,
-            blob_id: _, 
-            winner: _,
-            game_started: _,
-            claimed: _,
-            created_at: _,
-        } = game;
+        let game_id = object::uid_to_inner(&game.id);
+        let players_copy = game.players;
+        let stake_per_player = game.stake_per_player;
 
-        let game_id = object::uid_to_inner(&game_uid);
-        let num_players = vector::length(&players);
-        let GameEscrow { id: escrow_uid, game_id: _, mut funds } = escrow;
+        // Extract funds from escrow for refund
+        let GameEscrow { id: escrow_id, game_id: _, funds } = escrow;
+        object::delete(escrow_id);
 
-        // Refund each player equally
-        let mut i = 0;
-        while (i < num_players - 1) {
-            let player = *vector::borrow(&players, i);
-            let refund = coin::split(&mut funds, stake_per_player, ctx);
-            transfer::public_transfer(refund, player);
-            i = i + 1;
-        };
-        let last_player = *vector::borrow(&players, num_players - 1);
-        transfer::public_transfer(funds, last_player);
+        // Refund creator (only player)
+        transfer::public_transfer(funds, ctx.sender());
 
         event::emit(GameCancelled {
             game_id,
-            refunded_players: players,
+            refunded_players: players_copy,
             refund_per_player: stake_per_player,
         });
 
+        // Delete game object
+        let FlipGame { 
+            id: game_uid, 
+            creator: _, 
+            max_players: _, 
+            players: _, 
+            player_sides: _, 
+            stake_per_player: _, 
+            total_stake: _, 
+            unlock_ms: _, 
+            blob_id: _, 
+            coin_result: _, 
+            winners: _, 
+            game_started: _, 
+            claimed: _, 
+            created_at: _ 
+        } = game;
         object::delete(game_uid);
-        object::delete(escrow_uid);
     }
 
     // ============ Seal Timelock Approval ============
     
     /// Seal approve - key server calls this to verify decryption allowed
     /// Identity format: [package_id (32 bytes)][bcs(unlock_ms)]
-    public fun seal_approve(
+    public entry fun seal_approve(
         id: vector<u8>,
-        game: &FlipGame,
         clock: &Clock,
     ) {
-        let unlock_bytes = sui::bcs::to_bytes(&game.unlock_ms);
+        // Extract timestamp from identity (last 8 bytes)
         let id_len = vector::length(&id);
-        let unlock_len = vector::length(&unlock_bytes);
-        
-        assert!(id_len >= unlock_len, E_INVALID_SEAL_ID);
-        let mut i = 0;
-        while (i < unlock_len) {
-            let id_byte = *vector::borrow(&id, id_len - unlock_len + i);
-            let unlock_byte = *vector::borrow(&unlock_bytes, i);
-            assert!(id_byte == unlock_byte, E_INVALID_SEAL_ID);
+        assert!(id_len >= 8, E_INVALID_SEAL_ID);
+
+        // Get the timestamp from the identity
+        let mut timestamp_bytes = vector::empty<u8>();
+        let mut i = id_len - 8;
+        while (i < id_len) {
+            vector::push_back(&mut timestamp_bytes, *vector::borrow(&id, i));
             i = i + 1;
         };
 
+        let unlock_ms = bcs::peel_u64(&mut bcs::new(timestamp_bytes));
+
         // Only approve after unlock_ms
-        let now = sui::clock::timestamp_ms(clock);
-        assert!(now >= game.unlock_ms, E_TOO_EARLY);
+        let now = clock::timestamp_ms(clock);
+        assert!(now >= unlock_ms, E_TOO_EARLY);
     }
 
     // ============ View Functions (PUBLIC - everyone can see) ============
@@ -419,14 +468,45 @@ module coinflip_battle_move::game {
     public fun is_claimed(game: &FlipGame): bool { game.claimed }
     public fun get_creator(game: &FlipGame): address { game.creator }
     public fun get_blob_id(game: &FlipGame): &Option<vector<u8>> { &game.blob_id }
-    public fun get_winner(game: &FlipGame): &Option<address> { &game.winner }
+    public fun get_coin_result(game: &FlipGame): &Option<u8> { &game.coin_result }
+    public fun get_winners(game: &FlipGame): &Option<vector<address>> { &game.winners }
     
-    /// Check if claim is available
-    public fun can_claim(game: &FlipGame, clock: &Clock): bool {
-        game.game_started && 
-        option::is_some(&game.winner) &&
-        !game.claimed && 
-        sui::clock::timestamp_ms(clock) >= game.unlock_ms
+    /// Check if a specific player is a winner
+    public fun is_winner(game: &FlipGame, player: address): bool {
+        if (option::is_some(&game.winners)) {
+            let winners = option::borrow(&game.winners);
+            vector::contains(winners, &player)
+        } else {
+            false
+        }
+    }
+
+    /// Get number of winners
+    public fun get_num_winners(game: &FlipGame): u64 {
+        if (option::is_some(&game.winners)) {
+            vector::length(option::borrow(&game.winners))
+        } else {
+            0
+        }
+    }
+
+    /// Calculate reward per winner
+    public fun get_reward_per_winner(game: &FlipGame): u64 {
+        let num_winners = get_num_winners(game);
+        if (num_winners > 0) {
+            game.total_stake / num_winners
+        } else {
+            0
+        }
+    }
+
+    /// Check if claim is available for a specific player
+    public fun can_claim(game: &FlipGame, player: address, clock: &Clock): bool {
+        game.game_started &&
+        option::is_some(&game.coin_result) &&
+        !game.claimed &&
+        clock::timestamp_ms(clock) >= game.unlock_ms &&
+        is_winner(game, player)
     }
 
     /// Check time remaining until unlock (0 if already unlocked)

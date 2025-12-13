@@ -1,5 +1,5 @@
 import { CONTRACT_CONFIG } from '../config/constants';
-import type { EncryptedWinnerData } from '../types/game';
+import type { EncryptedResultData } from '../types/game';
 
 /**
  * Walrus Service - Upload and fetch encrypted winner data
@@ -59,57 +59,48 @@ export const fetchFromWalrus = async (blobId: string): Promise<Uint8Array> => {
     const arrayBuffer = await response.arrayBuffer();
     return new Uint8Array(arrayBuffer);
   } catch (error) {
-    console.error('Walrus fetch error:', error);
-    throw error;
+    throw new Error('Walrus fetch failed');
   }
 };
 
 // Convert blob ID string to bytes (for storing on-chain)
 export const blobIdToBytes = (blobId: string): Uint8Array => {
-  // Walrus blob IDs are base64 encoded
-  // Try base64 first, then hex
-  try {
-    // Check if it's hex (starts with 0x or all hex chars)
-    if (blobId.startsWith('0x') || /^[0-9a-fA-F]+$/.test(blobId)) {
-      const hex = blobId.startsWith('0x') ? blobId.slice(2) : blobId;
-      const bytes = new Uint8Array(hex.length / 2);
-      for (let i = 0; i < hex.length; i += 2) {
-        bytes[i / 2] = parseInt(hex.substring(i, i + 2), 16);
-      }
-      return bytes;
-    }
-    
-    // Otherwise treat as base64
-    const binaryString = atob(blobId);
-    const bytes = new Uint8Array(binaryString.length);
-    for (let i = 0; i < binaryString.length; i++) {
-      bytes[i] = binaryString.charCodeAt(i);
-    }
-    return bytes;
-  } catch {
-    // Fallback: encode as UTF-8
-    return new TextEncoder().encode(blobId);
-  }
+  // Store the blob ID as UTF-8 encoded string
+  // This preserves the original blob ID format exactly
+  return new TextEncoder().encode(blobId);
 };
 
 // Convert bytes to blob ID string
 export const bytesToBlobId = (bytes: Uint8Array): string => {
-  // Convert to base64
-  let binaryString = '';
-  for (let i = 0; i < bytes.length; i++) {
-    binaryString += String.fromCharCode(bytes[i]);
+  // The bytes stored on-chain need to be converted back to the original blob ID
+  // First try to decode as UTF-8 (if it was stored as a string)
+  try {
+    const decoded = new TextDecoder().decode(bytes);
+    // Check if it looks like a valid base64 blob ID (alphanumeric + / + = + -)
+    if (/^[A-Za-z0-9+/=_-]+$/.test(decoded)) {
+      return decoded;
+    }
+  } catch {
+    // Ignore decode errors
   }
-  return btoa(binaryString);
+  
+  // If UTF-8 decode failed or result doesn't look like base64, convert to base64
+  // This handles the case where raw bytes were stored
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
 };
 
-// Encode winner data to bytes (before encryption)
-export const encodeWinnerData = (data: EncryptedWinnerData): Uint8Array => {
+// Encode result data to bytes (before encryption)
+export const encodeResultData = (data: EncryptedResultData): Uint8Array => {
   const json = JSON.stringify(data);
   return new TextEncoder().encode(json);
 };
 
-// Decode winner data from bytes (after decryption)
-export const decodeWinnerData = (bytes: Uint8Array): EncryptedWinnerData => {
+// Decode result data from bytes (after decryption)
+export const decodeResultData = (bytes: Uint8Array): EncryptedResultData => {
   const json = new TextDecoder().decode(bytes);
   return JSON.parse(json);
 };

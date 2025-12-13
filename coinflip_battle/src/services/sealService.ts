@@ -116,7 +116,6 @@ export const decryptWithSeal = async (
 
     return decryptedData;
   } catch (error) {
-    console.error('Seal decryption error:', error);
     throw error;
   }
 };
@@ -134,7 +133,7 @@ export const createSessionKey = async (
   const sessionKey = await SessionKey.create({
     address,
     packageId,
-    ttlMin: 10, // 10 minutes TTL
+    ttlMin: 30, // 10 minutes TTL
     suiClient,
   });
 
@@ -155,7 +154,6 @@ export const createSessionKey = async (
  * This calls the seal_approve function in our contract
  */
 export const buildSealApproveTx = (
-  gameId: string,
   identity: string,
 ): Transaction => {
   const tx = new Transaction();
@@ -164,7 +162,6 @@ export const buildSealApproveTx = (
     target: `${CONTRACT_CONFIG.PACKAGE_ID}::${CONTRACT_CONFIG.MODULE_NAME}::seal_approve`,
     arguments: [
       tx.pure.vector('u8', Array.from(fromHex(identity))),
-      tx.object(gameId),
       tx.object('0x6'), // Clock
     ],
   });
@@ -177,7 +174,7 @@ export const buildSealApproveTx = (
  */
 export const fetchAndDecryptWinner = async (
   encryptedData: Uint8Array,
-  gameId: string,
+  _gameId: string,
   unlockMs: bigint,
   sessionKey: SessionKey,
   suiClient: SuiClient,
@@ -188,13 +185,13 @@ export const fetchAndDecryptWinner = async (
 
     // Check if we can decrypt (time has passed)
     if (BigInt(Date.now()) < unlockMs) {
-      console.log('Cannot decrypt yet - timelock not expired');
+      console.log('❌ Seal: Time lock not expired yet');
       return null;
     }
 
     // Build approval transaction
     const identity = buildSealIdentity(unlockMs);
-    const tx = buildSealApproveTx(gameId, identity);
+    const tx = buildSealApproveTx(identity);
     const txBytes = await tx.build({ client: suiClient, onlyTransactionKind: true });
 
     // Decrypt
@@ -204,9 +201,9 @@ export const fetchAndDecryptWinner = async (
     const jsonStr = new TextDecoder().decode(decryptedData);
     const data = JSON.parse(jsonStr);
     
-    return data.winner;
+    // Return the full JSON string for new format, or winner for old format
+    return data.winner || jsonStr;
   } catch (error) {
-    console.error('Error fetching/decrypting winner:', error);
     return null;
   }
 };

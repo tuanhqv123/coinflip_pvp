@@ -11,7 +11,9 @@ import '@mysten/dapp-kit/dist/index.css';
 const { networkConfig } = createNetworkConfig({
   localnet: { url: getFullnodeUrl('localnet') },
   mainnet: { url: getFullnodeUrl('mainnet') },
-  testnet: { url: getFullnodeUrl('testnet') },
+  testnet: { 
+    url: import.meta.env.DEV ? '/sui-rpc' : getFullnodeUrl('testnet')
+  },
 });
 
 const queryClient = new QueryClient();

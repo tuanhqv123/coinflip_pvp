@@ -2,8 +2,8 @@
 // Update these after deploying the contract
 
 export const CONTRACT_CONFIG = {
-  // Package ID - DEPLOYED TO TESTNET (v2 with player_sides)
-  PACKAGE_ID: '0x6d8cd865567867325fd627b945690d2e65f6f4a3ae089be012aa4eac75588aa5',
+  // Package ID - DEPLOYED TO TESTNET (v3 with on-chain randomness and multiple winners)
+  PACKAGE_ID: '0xdd467efaa00683ce1934367c58e38de613b4d06bba6a9ffcc13062a914d250cc',
   
   // Module name
   MODULE_NAME: 'game',
@@ -11,10 +11,10 @@ export const CONTRACT_CONFIG = {
   // Network
   NETWORK: 'testnet' as const,
   
-  // Walrus Configuration (Testnet)
+  // Walrus Configuration (Testnet) - Using proxy to avoid CORS
   // Docs: https://docs.walrus.site/
-  WALRUS_PUBLISHER_URL: 'https://publisher.walrus-testnet.walrus.space',
-  WALRUS_AGGREGATOR_URL: 'https://aggregator.walrus-testnet.walrus.space',
+  WALRUS_PUBLISHER_URL: import.meta.env.DEV ? '/walrus-publisher' : 'https://publisher.walrus-testnet.walrus.space',
+  WALRUS_AGGREGATOR_URL: import.meta.env.DEV ? '/walrus-aggregator' : 'https://aggregator.walrus-testnet.walrus.space',
   
   // Lock duration in milliseconds (must match contract: 5 seconds)
   LOCK_DURATION_MS: 5000,
@@ -22,12 +22,13 @@ export const CONTRACT_CONFIG = {
   // Minimum stake in MIST (0.001 SUI = 1,000,000 MIST)
   MIN_STAKE_MIST: 1000000,
   
-  // Backend event listener (set to false - using App.tsx processing instead)
-  BACKEND_ENABLED: false,
+  // Backend event listener (set to true for automatic processing)
+  BACKEND_ENABLED: true,
 };
 
-// Clock object ID (shared system object on Sui)
+// System object IDs on Sui
 export const CLOCK_ID = '0x6';
+export const RANDOM_ID = '0x8'; // Random object for on-chain randomness
 
 // Game status enum
 export enum GameStatus {

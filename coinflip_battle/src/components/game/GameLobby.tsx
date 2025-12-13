@@ -21,7 +21,8 @@ interface Game {
   totalStake: string;
   status: 'waiting' | 'full' | 'flipping' | 'completed';
   createdAt: Date;
-  winner: string | null;
+  winner: string | null; // Keep for backward compatibility
+  winners: string[]; // New field for multiple winners
   unlockMs: number;
   timeUntilUnlock: number;
   canClaim: boolean;
@@ -37,15 +38,17 @@ interface GameLobbyProps {
   onCancelGame: (gameId: string) => void;
   loading: boolean;
   currentAddress?: string;
+  decryptingGames: Set<string>;
 }
 
 // Center content - VS, Flipping Coin, or Result Coin
 const CenterContent: React.FC<{
   status: Game['status'];
   playerCount: string;
-  winner: string | null;
+  winners: string[];
   winnerSide: 'heads' | 'tails' | null;
-}> = ({ status, playerCount, winner, winnerSide }) => {
+  isDecrypting?: boolean;
+}> = ({ status, playerCount, winners, winnerSide, isDecrypting }) => {
   // Waiting - show VS
   if (status === 'waiting') {
     return (
@@ -56,12 +59,14 @@ const CenterContent: React.FC<{
     );
   }
 
-  // Game is full or flipping - show flipping coin until winner is revealed
-  if ((status === 'full' || status === 'flipping') && !winner) {
+  // Game is full, flipping, or decrypting - show flipping coin
+  if (status === 'full' || status === 'flipping' || isDecrypting) {
     return (
       <div className="flex flex-col items-center justify-center h-full">
         <FlippingCoin3D size="medium" />
-        <div className="text-sm text-white/60 mt-2">{playerCount}</div>
+        <div className="text-sm text-white/60 mt-2">
+          {isDecrypting ? 'Decrypting...' : status === 'flipping' ? 'Flipping...' : playerCount}
+        </div>
       </div>
     );
   }
@@ -71,6 +76,9 @@ const CenterContent: React.FC<{
     <div className="flex flex-col items-center justify-center h-full">
       <PixelCoin side={winnerSide || 'heads'} size="medium"/>
       <div className="text-sm text-white/60 mt-2">{playerCount}</div>
+      {winners.length > 1 && (
+        <div className="text-xs text-green-400 mt-1">{winners.length} winners!</div>
+      )}
     </div>
   );
 };
@@ -82,7 +90,8 @@ const GameCard: React.FC<{
   onClaim: () => void;
   onCancel: () => void;
   currentAddress?: string;
-}> = ({ game, onJoin, onClaim, onCancel, currentAddress }) => {
+  isDecrypting?: boolean;
+}> = ({ game, onJoin, onClaim, onCancel, currentAddress, isDecrypting }) => {
   const canJoin = game.status === 'waiting' && !game.isPlayer && currentAddress;
   const canCancel = game.isCreator && game.status === 'waiting' && game.currentPlayers === 1;
 
@@ -102,10 +111,19 @@ const GameCard: React.FC<{
 
   // Get the winner's side
   const getWinnerSide = (): 'heads' | 'tails' | null => {
-    if (!game.winner) return null;
-    const winnerIndex = game.players.findIndex(p => p.address === game.winner);
-    if (winnerIndex >= 0 && game.playerSides[winnerIndex]) {
-      return game.playerSides[winnerIndex];
+    // Check for multiple winners first
+    if (game.winners && game.winners.length > 0) {
+      const winnerIndex = game.players.findIndex(p => p.address === game.winners[0]);
+      if (winnerIndex >= 0 && game.playerSides[winnerIndex]) {
+        return game.playerSides[winnerIndex];
+      }
+    }
+    // Fallback to single winner for backward compatibility
+    if (game.winner) {
+      const winnerIndex = game.players.findIndex(p => p.address === game.winner);
+      if (winnerIndex >= 0 && game.playerSides[winnerIndex]) {
+        return game.playerSides[winnerIndex];
+      }
     }
     return 'heads';
   };
@@ -144,7 +162,7 @@ const GameCard: React.FC<{
               <div className="absolute -top-1 -right-1 w-7 h-7 rounded-full p-0.5">
                 <PixelCoin side={getPlayerSide(0)} size="small" />
               </div>
-              {game.winner === game.players[0]?.address && (
+              {game.status === 'completed' && (game.winner === game.players[0]?.address || game.winners.includes(game.players[0]?.address)) && (
                 <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 text-xl">🏆</div>
               )}
             </div>
@@ -156,11 +174,12 @@ const GameCard: React.FC<{
           </div>
 
           {/* Center: VS / Flipping Coin / Result Coin */}
-          <CenterContent 
-            status={game.status} 
+          <CenterContent
+            status={game.status}
             playerCount={playerCount}
-            winner={game.winner}
+            winners={game.winners}
             winnerSide={winnerSide}
+            isDecrypting={isDecrypting}
           />
 
           {/* Player 2 (Right) or Empty */}
@@ -171,7 +190,7 @@ const GameCard: React.FC<{
                 <div className="absolute -top-1 -right-1 w-7 h-7 rounded-full p-0.5">
                   <PixelCoin side={getPlayerSide(1)} size="small" />
                 </div>
-                {game.winner === game.players[1].address && (
+                {game.status === 'completed' && (game.winner === game.players[1].address || game.winners.includes(game.players[1].address)) && (
                   <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 text-xl">🏆</div>
                 )}
               </div>
@@ -202,13 +221,14 @@ const GameCard: React.FC<{
       {game.maxPlayers > 2 && (
         <>
           {/* Center animation for multiplayer */}
-          {(game.status === 'full' || game.status === 'flipping' || game.winner) && (
+          {(game.status === 'full' || game.status === 'flipping' || game.status === 'completed' || isDecrypting) && (
             <div className="flex justify-center mb-4">
-              <CenterContent 
-                status={game.status} 
+              <CenterContent
+                status={game.status}
                 playerCount={playerCount}
-                winner={game.winner}
+                winners={game.winners}
                 winnerSide={winnerSide}
+                isDecrypting={isDecrypting}
               />
             </div>
           )}
@@ -220,27 +240,30 @@ const GameCard: React.FC<{
 
           {/* Player list - simple row layout */}
           <div className="mb-4 max-h-40 overflow-y-auto space-y-1 pr-1">
-            {game.players.map((player, idx) => (
-              <div
-                key={idx}
-                className={`flex items-center gap-3 py-1 px-2 rounded-lg ${
-                  player.address === game.winner
-                    ? 'bg-gradient-to-r from-green-500/20 to-emerald-500/20 border border-green-500/50'
-                    : ''
-                }`}
-              >
-                <Avatar seed={player.avatarSeed} size="small" />
-                <p className={`text-xs font-medium flex-1 ${
-                  player.address === currentAddress ? 'text-yellow-400' : player.address === game.winner ? 'text-green-400 font-bold' : 'text-white/90'
-                }`}>
-                  {shortenAddress(player.address)}
-                </p>
-                {player.address === game.winner && <span className="text-green-400">🏆</span>}
-                <div className="w-6 h-6">
-                  <PixelCoin side={getPlayerSide(idx)} size="small" />
+            {game.players.map((player, idx) => {
+              const isWinner = game.status === 'completed' && (player.address === game.winner || game.winners.includes(player.address));
+              return (
+                <div
+                  key={idx}
+                  className={`flex items-center gap-3 py-1 px-2 rounded-lg ${
+                    isWinner
+                      ? 'bg-gradient-to-r from-green-500/20 to-emerald-500/20 border border-green-500/50'
+                      : ''
+                  }`}
+                >
+                  <Avatar seed={player.avatarSeed} size="small" />
+                  <p className={`text-xs font-medium flex-1 ${
+                    player.address === currentAddress ? 'text-yellow-400' : isWinner ? 'text-green-400 font-bold' : 'text-white/90'
+                  }`}>
+                    {shortenAddress(player.address)}
+                  </p>
+                  {isWinner && <span className="text-green-400">🏆</span>}
+                  <div className="w-6 h-6">
+                    <PixelCoin side={getPlayerSide(idx)} size="small" />
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
             {/* Empty slots */}
             {Array.from({ length: game.maxPlayers - game.currentPlayers }).map((_, idx) => {
               const playerIndex = game.currentPlayers + idx;
@@ -290,9 +313,6 @@ const GameCard: React.FC<{
   );
 };
 
-// Filter types
-type FilterType = 'open' | 'claimed' | 'win' | 'lose';
-
 // Main GameLobby component
 export const GameLobby: React.FC<GameLobbyProps> = ({
   games,
@@ -301,28 +321,11 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
   onCancelGame,
   loading,
   currentAddress,
+  decryptingGames,
 }) => {
-  const [filter, setFilter] = React.useState<FilterType>('open');
-
   // Separate my games and other games
   const myGames = games.filter((game) => game.isPlayer || game.isCreator);
   const otherGames = games.filter((game) => !game.isPlayer && !game.isCreator);
-
-  // Apply filter to my games
-  const filterMyGames = (gameList: Game[]) => {
-    switch (filter) {
-      case 'open':
-        return gameList.filter(g => g.status === 'waiting' || g.status === 'full' || g.status === 'flipping' || (g.status === 'completed' && g.canClaim));
-      case 'claimed':
-        return gameList.filter(g => g.status === 'completed' && !g.canClaim);
-      case 'win':
-        return gameList.filter(g => g.isWinner && g.status === 'completed');
-      case 'lose':
-        return gameList.filter(g => !g.isWinner && g.status === 'completed' && g.winner);
-      default:
-        return gameList;
-    }
-  };
 
   // Sort: active games first
   const sortGames = (gameList: Game[]) => {
@@ -332,17 +335,10 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
     });
   };
 
-  const filteredMyGames = sortGames(filterMyGames(myGames));
-  const sortedOtherGames = sortGames(otherGames.filter(g => g.status === 'waiting'));
+  const sortedMyGames = sortGames(myGames);
+  const sortedOtherGames = sortGames(otherGames);
 
   const showLoading = loading && games.length === 0;
-
-  const filterButtons: { key: FilterType; label: string }[] = [
-    { key: 'open', label: 'Open' },
-    { key: 'win', label: 'Win' },
-    { key: 'lose', label: 'Lose' },
-    { key: 'claimed', label: 'Claimed' },
-  ];
 
   return (
     <div className="mt-6 space-y-6">
@@ -356,54 +352,31 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
       {/* My Games Section */}
       {!showLoading && myGames.length > 0 && (
         <div>
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-lg font-bold text-white">
-              My Games
-              <span className="text-white/50 text-sm font-normal ml-2">({filteredMyGames.length})</span>
-            </h2>
-            {/* Filter Buttons */}
-            <div className="flex gap-1">
-              {filterButtons.map(({ key, label }) => (
-                <button
-                  key={key}
-                  onClick={() => setFilter(key)}
-                  className={`px-3 py-1 text-xs rounded-full transition-all ${
-                    filter === key
-                      ? 'bg-white/20 text-white'
-                      : 'bg-white/5 text-white/50 hover:bg-white/10'
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
+          <h2 className="text-lg font-bold text-white mb-3">
+            My Games
+            <span className="text-white/50 text-sm font-normal ml-2">({sortedMyGames.length})</span>
+          </h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {sortedMyGames.map((game) => (
+              <GameCard
+                key={game.id}
+                game={game}
+                onJoin={(side) => onJoinGame(game.id, side)}
+                onClaim={() => onClaimReward(game.id)}
+                onCancel={() => onCancelGame(game.id)}
+                currentAddress={currentAddress}
+                isDecrypting={decryptingGames.has(game.id)}
+              />
+            ))}
           </div>
-          {filteredMyGames.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {filteredMyGames.map((game) => (
-                <GameCard
-                  key={game.id}
-                  game={game}
-                  onJoin={(side) => onJoinGame(game.id, side)}
-                  onClaim={() => onClaimReward(game.id)}
-                  onCancel={() => onCancelGame(game.id)}
-                  currentAddress={currentAddress}
-                />
-              ))}
-            </div>
-          ) : (
-            <div className="text-center py-4 bg-white/5 rounded-xl">
-              <p className="text-white/40 text-sm">No {filter} games</p>
-            </div>
-          )}
         </div>
       )}
 
-      {/* Other Games Section */}
+      {/* All Games Section */}
       {!showLoading && sortedOtherGames.length > 0 && (
         <div>
           <h2 className="text-lg font-bold text-white mb-3">
-            Available Games
+            All Games
             <span className="text-white/50 text-sm font-normal ml-2">({sortedOtherGames.length})</span>
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -415,6 +388,7 @@ export const GameLobby: React.FC<GameLobbyProps> = ({
                 onClaim={() => onClaimReward(game.id)}
                 onCancel={() => onCancelGame(game.id)}
                 currentAddress={currentAddress}
+                isDecrypting={decryptingGames.has(game.id)}
               />
             ))}
           </div>

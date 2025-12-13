@@ -1,6 +1,6 @@
 import { SuiClient } from '@mysten/sui/client';
 import { Transaction } from '@mysten/sui/transactions';
-import { CONTRACT_CONFIG, CLOCK_ID } from '../config/constants';
+import { CONTRACT_CONFIG, CLOCK_ID, RANDOM_ID } from '../config/constants';
 import type { Game, GameDisplay } from '../types/game';
 
 // Convert MIST to SUI
@@ -26,14 +26,17 @@ export const parseGameObject = (obj: any): Game | null => {
       creator: fields.creator,
       maxPlayers: fields.max_players,
       players: fields.players || [],
+      playerSides: (fields.player_sides || []).map((s: number) => s === 0 ? 'heads' : 'tails'),
       stakePerPlayer: BigInt(fields.stake_per_player),
       totalStake: BigInt(fields.total_stake),
       unlockMs: BigInt(fields.unlock_ms || 0),
       blobId: fields.blob_id ? bytesToHex(fields.blob_id) : null,
-      winner: fields.winner || null,
-      gameStarted: fields.game_started,
-      claimed: fields.claimed,
+      winner: fields.winner || null, // For backward compatibility
+      winners: fields.winners || [], // New field for multiple winners
+      gameStarted: fields.game_started || false,
+      claimed: fields.claimed || false,
       createdAt: BigInt(fields.created_at),
+      coinResult: fields.coin_result || null,
     };
   } catch (e) {
     console.error('Error parsing game object:', e);
@@ -51,14 +54,12 @@ const bytesToHex = (bytes: number[]): string => {
 export const gameToDisplay = (game: Game, currentTime: number, playerSides: ('heads' | 'tails')[] = []): GameDisplay => {
   const unlockMs = Number(game.unlockMs);
   const timeUntilUnlock = Math.max(0, unlockMs - currentTime);
-  
+
   let status: GameDisplay['status'] = 'waiting';
   if (game.claimed) {
     status = 'completed';
-  } else if (game.winner) {
-    status = timeUntilUnlock > 0 ? 'flipping' : 'completed';
   } else if (game.gameStarted) {
-    status = 'flipping';
+    status = timeUntilUnlock > 0 ? 'flipping' : 'completed';
   } else if (game.players.length === game.maxPlayers) {
     status = 'full';
   }
@@ -75,11 +76,12 @@ export const gameToDisplay = (game: Game, currentTime: number, playerSides: ('he
     totalStake: mistToSui(game.totalStake),
     unlockMs,
     blobId: game.blobId,
-    winner: game.winner,
+    coinResult: game.coinResult,
+    winners: game.winners,
     status,
     createdAt: new Date(Number(game.createdAt)),
     timeUntilUnlock,
-    canClaim: game.gameStarted && !!game.winner && !game.claimed && timeUntilUnlock <= 0,
+    canClaim: !!game.gameStarted && !!(game.winners && game.winners.length > 0) && !game.claimed && timeUntilUnlock <= 0,
   };
 };
 
@@ -130,6 +132,7 @@ export const buildJoinRoomTx = (
       tx.pure.u8(sideValue),
       coin,
       tx.object(CLOCK_ID),
+      tx.object(RANDOM_ID),
     ],
   });
 

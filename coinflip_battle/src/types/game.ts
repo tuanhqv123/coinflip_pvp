@@ -11,11 +11,14 @@ export interface Game {
   creator: string;
   maxPlayers: number;
   players: string[];
+  playerSides: ('heads' | 'tails')[]; // Player side choices
   stakePerPlayer: bigint;
   totalStake: bigint;
   unlockMs: bigint;
   blobId: string | null;
-  winner: string | null;
+  coinResult: number | null; // 0 = heads, 1 = tails
+  winners: string[] | null; // List of all winners
+  winner: string | null; // For backward compatibility
   gameStarted: boolean;
   claimed: boolean;
   createdAt: bigint;
@@ -33,11 +36,13 @@ export interface GameDisplay {
   totalStake: string;
   unlockMs: number;
   blobId: string | null;
-  winner: string | null;
+  coinResult: number | null; // 0 = heads, 1 = tails
+  winners: string[] | null; // List of all winners
   status: 'waiting' | 'full' | 'flipping' | 'completed';
   createdAt: Date;
   timeUntilUnlock: number;
   canClaim: boolean;
+  rewardPerWinner?: string; // Calculated reward per winner
 }
 
 // Event types from contract
@@ -61,11 +66,14 @@ export interface GameFullEvent {
   players: string[];
   total_stake: string;
   unlock_ms: string;
+  coin_result: number;
+  winners: string[];
 }
 
-export interface WinnerSetEvent {
+export interface ResultSetEvent {
   game_id: string;
-  winner: string;
+  coin_result: number;
+  winners: string[];
   blob_id: number[];
   unlock_ms: string;
 }
@@ -78,8 +86,9 @@ export interface RewardClaimedEvent {
 }
 
 // Walrus encrypted data structure
-export interface EncryptedWinnerData {
-  winner: string;
+export interface EncryptedResultData {
+  coinResult: number; // 0 = heads, 1 = tails
+  winners: string[];
   gameId: string;
   timestamp: number;
 }

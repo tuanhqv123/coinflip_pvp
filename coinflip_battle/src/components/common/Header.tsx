@@ -2,6 +2,7 @@ import React from 'react';
 import { ConnectButton, useCurrentAccount, useDisconnectWallet } from '@mysten/dapp-kit';
 import { formatBalance, shortenAddress } from '../../utils/address';
 import { useBalance } from '../../hooks/useBalance';
+import { useSealSession } from '../../hooks/useSealSession';
 import { Avatar } from './Avatar';
 import { FlippingCoin3D } from '../game/PixelCoin';
 import suiSymbol from '../../assets/Sui_Symbol_White.png';
@@ -16,6 +17,7 @@ export const Header: React.FC<HeaderProps> = ({
   const currentAccount = useCurrentAccount();
   const { balance, isPending } = useBalance();
   const { mutate: disconnect } = useDisconnectWallet();
+  const { sessionKey, isCreating } = useSealSession();
 
   const handleDisconnect = () => {
     disconnect();
@@ -32,6 +34,14 @@ export const Header: React.FC<HeaderProps> = ({
 
       {currentAccount ? (
         <div className="wallet-info flex items-center gap-3">
+          {/* Seal Session Status */}
+          <div className="flex items-center gap-2">
+            <div className={`w-2 h-2 rounded-full ${sessionKey ? 'bg-green-500' : isCreating ? 'bg-yellow-500' : 'bg-red-500'}`}></div>
+            <span className="text-xs text-white/60">
+              {sessionKey ? 'Seal Ready' : isCreating ? 'Seal Connecting...' : 'Seal Required'}
+            </span>
+          </div>
+
           <div className="balance text-white/90 font-medium flex items-center gap-2">
             {isPending ? (
               <span className="text-white/50">Loading...</span>
