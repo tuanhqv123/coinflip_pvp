@@ -3,7 +3,7 @@
 
 export const CONTRACT_CONFIG = {
   // Package ID - DEPLOYED TO TESTNET (v3 with on-chain randomness and multiple winners)
-  PACKAGE_ID: '0xe438f4a76bae24ee28172cb2ba248a10749346955b3d9daebbfc51b525d35aa5',
+  PACKAGE_ID: '0xa19bd42ca1944981462dc9da0b2445be899f12d360c8a3881186a7c68ff84aef',
   
   // Module name
   MODULE_NAME: 'game',

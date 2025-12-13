@@ -79,7 +79,8 @@ module coinflip_battle_move::game {
         winners: Option<vector<address>>,
         /// Game state
         game_started: bool,
-        claimed: bool,
+        /// Track which players have claimed their rewards
+        claimed_by: vector<address>,
         created_at: u64,
     }
 
@@ -182,7 +183,7 @@ module coinflip_battle_move::game {
             coin_result: option::none(),
             winners: option::none(),
             game_started: false,
-            claimed: false,
+            claimed_by: vector::empty<address>(),
             created_at: clock::timestamp_ms(clock),
         };
 
@@ -308,7 +309,7 @@ module coinflip_battle_move::game {
     /// Winner claims reward - ANY WINNER CAN CALL
     /// After unlock_ms, winner decrypts from Walrus and claims
     public entry fun claim_reward(
-        game: FlipGame,
+        mut game: FlipGame,
         mut escrow: GameEscrow,
         clock: &Clock,
         ctx: &mut TxContext
@@ -320,7 +321,9 @@ module coinflip_battle_move::game {
         assert!(game.game_started, E_GAME_NOT_STARTED);
         assert!(option::is_some(&game.coin_result), E_RESULT_NOT_SET);
         assert!(now >= game.unlock_ms, E_TOO_EARLY);
-        assert!(!game.claimed, E_ALREADY_CLAIMED);
+        
+        // Check if caller already claimed
+        assert!(!vector::contains(&game.claimed_by, &caller), E_ALREADY_CLAIMED);
 
         // ONLY WINNER can claim
         let winners = option::borrow(&game.winners);
@@ -330,12 +333,14 @@ module coinflip_battle_move::game {
         // Calculate reward per winner
         let num_winners = vector::length(winners);
         let reward_per_winner = game.total_stake / (num_winners as u64);
-        let creator = game.creator;
         let game_id = object::uid_to_inner(&game.id);
 
         // Winner claims their share by splitting from escrow
         let reward = coin::split(&mut escrow.funds, reward_per_winner, ctx);
         transfer::public_transfer(reward, caller);
+
+        // Mark this player as having claimed
+        vector::push_back(&mut game.claimed_by, caller);
 
         event::emit(RewardClaimed {
             game_id,
@@ -344,35 +349,44 @@ module coinflip_battle_move::game {
             claimed_at: now,
         });
 
-        // Extract remaining funds from escrow and delete escrow
-        let GameEscrow { id: escrow_id, game_id: _, funds } = escrow;
-        object::delete(escrow_id);
+        // Check if all winners have claimed
+        let all_claimed = vector::length(&game.claimed_by) == num_winners;
+        
+        if (all_claimed) {
+            // All winners claimed - clean up game and escrow
+            let GameEscrow { id: escrow_id, game_id: _, funds } = escrow;
+            object::delete(escrow_id);
 
-        // For now, transfer remaining funds to creator for simplicity
-        if (coin::value(&funds) > 0) {
-            transfer::public_transfer(funds, creator);
+            // Transfer any remaining funds to creator
+            if (coin::value(&funds) > 0) {
+                transfer::public_transfer(funds, game.creator);
+            } else {
+                coin::destroy_zero(funds);
+            };
+
+            // Delete game object
+            let FlipGame { 
+                id: game_uid, 
+                creator: _, 
+                max_players: _, 
+                players: _, 
+                player_sides: _, 
+                stake_per_player: _, 
+                total_stake: _, 
+                unlock_ms: _, 
+                blob_id: _, 
+                coin_result: _, 
+                winners: _, 
+                game_started: _, 
+                claimed_by: _, 
+                created_at: _ 
+            } = game;
+            object::delete(game_uid);
         } else {
-            coin::destroy_zero(funds);
+            // Some winners haven't claimed yet - keep game and escrow alive
+            transfer::public_share_object(game);
+            transfer::public_share_object(escrow);
         };
-
-        // Delete game object
-        let FlipGame { 
-            id: game_uid, 
-            creator: _, 
-            max_players: _, 
-            players: _, 
-            player_sides: _, 
-            stake_per_player: _, 
-            total_stake: _, 
-            unlock_ms: _, 
-            blob_id: _, 
-            coin_result: _, 
-            winners: _, 
-            game_started: _, 
-            claimed: _, 
-            created_at: _ 
-        } = game;
-        object::delete(game_uid);
     }
 
     /// Cancel game room - ONLY creator, ONLY when no other players joined
@@ -419,7 +433,7 @@ module coinflip_battle_move::game {
             coin_result: _, 
             winners: _, 
             game_started: _, 
-            claimed: _, 
+            claimed_by: _, 
             created_at: _ 
         } = game;
         object::delete(game_uid);
@@ -465,7 +479,15 @@ module coinflip_battle_move::game {
     public fun get_created_at(game: &FlipGame): u64 { game.created_at }
     public fun is_full(game: &FlipGame): bool { vector::length(&game.players) == (game.max_players as u64) }
     public fun is_started(game: &FlipGame): bool { game.game_started }
-    public fun is_claimed(game: &FlipGame): bool { game.claimed }
+    public fun is_claimed(game: &FlipGame): bool { 
+        // Game is considered claimed if all winners have claimed
+        if (option::is_some(&game.winners)) {
+            let winners = option::borrow(&game.winners);
+            vector::length(&game.claimed_by) == vector::length(winners)
+        } else {
+            false
+        }
+    }
     public fun get_creator(game: &FlipGame): address { game.creator }
     public fun get_blob_id(game: &FlipGame): &Option<vector<u8>> { &game.blob_id }
     public fun get_coin_result(game: &FlipGame): &Option<u8> { &game.coin_result }
@@ -504,7 +526,7 @@ module coinflip_battle_move::game {
     public fun can_claim(game: &FlipGame, player: address, clock: &Clock): bool {
         game.game_started &&
         option::is_some(&game.coin_result) &&
-        !game.claimed &&
+        !vector::contains(&game.claimed_by, &player) &&
         clock::timestamp_ms(clock) >= game.unlock_ms &&
         is_winner(game, player)
     }
